@@ -1,0 +1,83 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  fullName  String
+  email     String   @unique
+  password  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  events    Event[]
+  tasks     Task[]
+  notifications Notification[]
+}
+model Event {
+  id                Int       @id @default(autoincrement())
+  title             String
+  date              DateTime
+  startHour         Float
+  endHour           Float
+  attendees         String[]
+  location          String?
+  description       String?
+  videoconferencing String?
+  color             String?
+  completed         Boolean   @default(false)
+  completedAt       DateTime?
+  user              User      @relation(fields: [userId], references: [id])
+  userId            Int
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  notifications Notification[]
+}
+
+
+model Task {
+  id              Int      @id @default(autoincrement())
+  title           String
+  dueDate         DateTime
+  startHour       Float
+  endHour         Float
+  durationMinutes Int
+  color           String?
+  user            User     @relation(fields: [userId], references: [id])
+  userId          Int
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  notifications Notification[]
+}
+
+model Notification {
+  id             Int       @id @default(autoincrement())
+  type           String
+  title          String
+  message        String
+  scheduledTime  DateTime
+  sentAt         DateTime?
+  isSent         Boolean   @default(false)
+  isRead         Boolean   @default(false)
+
+  event          Event?    @relation(fields: [eventId], references: [id])
+  eventId        Int?
+
+  task           Task?     @relation(fields: [taskId], references: [id])
+  taskId         Int?
+
+  user           User      @relation(fields: [userId], references: [id])
+  userId         Int
+
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+}
