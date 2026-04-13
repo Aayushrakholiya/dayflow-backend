@@ -76,8 +76,8 @@ export async function processEventNotifications() {
 
     // Combine regular and imported events
     const allEvents = [
-      ...allTodayEvents.map(e => ({ ...e, isImported: false })),
-      ...allTodayImportedEvents.map(e => ({ ...e, isImported: true }))
+      ...allTodayEvents.map((e: any) => ({ ...e, isImported: false })),
+      ...allTodayImportedEvents.map((e: any) => ({ ...e, isImported: true }))
     ];
 
     // Filter events by START HOUR (not just by date)
@@ -239,7 +239,7 @@ export async function processTaskNotifications() {
 
     // Filter tasks by START HOUR (not just by date)
     // Calculate actual due time = dueDate + startHour
-    const upcomingTasks = allTodayTasks.filter(task => {
+    const upcomingTasks = allTodayTasks.filter((task: any) => {
       const taskDate = task.dueDate instanceof Date ? task.dueDate : new Date(task.dueDate);
       const taskDueTime = new Date(taskDate);
       
