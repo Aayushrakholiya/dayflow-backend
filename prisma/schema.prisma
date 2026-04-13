@@ -1,0 +1,113 @@
+generator client {
+  provider        = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id                     Int                     @id @default(autoincrement())
+  fullName               String
+  email                  String                  @unique
+  password               String
+  deviceTokens           String[]                @default([])
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+  events                 Event[]
+  tasks                  Task[]
+  notifications          Notification[]
+  externalCalendarTokens ExternalCalendarToken[]
+  importedEvents         ImportedEvent[]
+}
+
+model Event {
+  id                Int           @id @default(autoincrement())
+  title             String
+  date              DateTime
+  startHour         Float
+  endHour           Float
+  attendees         String[]
+  location          String?
+  description       String?
+  videoconferencing String?
+  color             String?
+  completed         Boolean       @default(false)
+  completedAt       DateTime?
+  user              User          @relation(fields: [userId], references: [id])
+  userId            Int
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  notifications     Notification[]
+}
+
+model ExternalCalendarToken {
+  id           Int       @id @default(autoincrement())
+  userId       Int
+  provider     String
+  accessToken  String
+  refreshToken String?
+  expiresAt    DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, provider], name: "userId_provider")
+}
+
+model ImportedEvent {
+  id                Int      @id @default(autoincrement())
+  userId            Int
+  externalId        String
+  source            String
+  title             String
+  date              DateTime
+  startHour         Float
+  endHour           Float
+  location          String?
+  locationOverride  String?
+  description       String?
+  attendees         String[]
+  videoconferencing String?
+  color             String
+  calendarName      String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, externalId, source], name: "userId_externalId_source")
+}
+
+model Task {
+  id              Int            @id @default(autoincrement())
+  title           String
+  dueDate         DateTime
+  startHour       Float
+  endHour         Float
+  durationMinutes Int
+  color           String?
+  user            User           @relation(fields: [userId], references: [id])
+  userId          Int
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  notifications   Notification[]
+}
+
+model Notification {
+  id            Int       @id @default(autoincrement())
+  type          String
+  title         String
+  message       String
+  scheduledTime DateTime
+  sentAt        DateTime?
+  isSent        Boolean   @default(false)
+  isRead        Boolean   @default(false)
+  event         Event?    @relation(fields: [eventId], references: [id])
+  eventId       Int?
+  task          Task?     @relation(fields: [taskId], references: [id])
+  taskId        Int?
+  user          User      @relation(fields: [userId], references: [id])
+  userId        Int
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
