@@ -1,4 +1,12 @@
-import process from "node:process";
+/*  
+*  FILE          : userProfile.ts 
+*  PROJECT       : PROG3221 - capstone
+*  PROGRAMMER    : Ayushkumar Rakholiya, Jal Shah, Darsh Patel and Virajsinh Solanki 
+*  FIRST VERSION : 2026-02-01 
+*  DESCRIPTION   : 
+*    Returns logged-in user's name and email by reading their JWT token.
+*/ 
+
 import express from "express";
 import jwt from "jsonwebtoken";
 
@@ -29,7 +37,7 @@ export default function createUserProfileRouter() {
           fullName: string;
           email: string;
         };
-      } catch (_err) {
+      } catch (err) {
         return res.status(401).json({ message: "Invalid or expired token." });
       }
 
@@ -37,7 +45,7 @@ export default function createUserProfileRouter() {
         fullName: payload.fullName,
         email: payload.email,
       });
-    } catch (_err) {
+    } catch (err) {
       return res.status(500).json({ message: "Internal server error." });
     }
   });

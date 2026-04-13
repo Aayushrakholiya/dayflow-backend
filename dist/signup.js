@@ -1,24 +1,21 @@
 "use strict";
+/*
+*  FILE          : signup.ts
+*  PROJECT       : PROG3221 - capstone
+*  PROGRAMMER    : Ayushkumar Rakholiya, Jal Shah, Darsh Patel and Virajsinh Solanki
+*  FIRST VERSION : 2026-02-01
+*  DESCRIPTION   :
+*    Validates user input, hashes password, creates user account, and returns JWT token.
+*/
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.default = createSignupRouter;
-const node_process_1 = __importDefault(require("node:process"));
 const express_1 = __importDefault(require("express"));
-const client_1 = require("@prisma/client");
-const adapter_pg_1 = require("@prisma/adapter-pg");
-const pg_1 = __importDefault(require("pg"));
+const db_1 = __importDefault(require("./db"));
 const argon2_1 = __importDefault(require("argon2"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
-// Create PostgreSQL pool
-const pool = new pg_1.default.Pool({
-    connectionString: node_process_1.default.env.DATABASE_URL,
-});
-// Create adapter
-const adapter = new adapter_pg_1.PrismaPg(pool);
-// Initialize PrismaClient with adapter
-const prisma = new client_1.PrismaClient({ adapter });
 function createSignupRouter() {
     const router = express_1.default.Router();
     // this will validate that if the user has entered full name or not 
@@ -84,7 +81,7 @@ function createSignupRouter() {
                 });
             }
             // this will check if the entered email is previously used or not 
-            const existingUser = await prisma.user.findUnique({
+            const existingUser = await db_1.default.user.findUnique({
                 where: { email }
             });
             if (existingUser) {
@@ -95,7 +92,7 @@ function createSignupRouter() {
             // this will hash the password before storing it in the database
             const hashPass = await argon2_1.default.hash(password);
             // this will create the user in the database
-            const newUser = await prisma.user.create({
+            const newUser = await db_1.default.user.create({
                 data: {
                     fullName,
                     email,
@@ -103,11 +100,11 @@ function createSignupRouter() {
                 }
             });
             // Sign a JWT so the frontend can log the user in immediately after signup
-            const secret = node_process_1.default.env.JWT_SECRET;
+            const secret = process.env.JWT_SECRET;
             if (!secret) {
                 return res.status(500).json({ message: "Server misconfiguration." });
             }
-            const token = jsonwebtoken_1.default.sign({ userId: newUser.id, fullName: newUser.fullName, email: newUser.email }, secret, { expiresIn: "30d", algorithm: "HS256" });
+            const token = jsonwebtoken_1.default.sign({ userId: newUser.id, fullName: newUser.fullName, email: newUser.email }, secret, { expiresIn: "7d", algorithm: "HS256" });
             // this will send the success message 
             return res.status(201).json({
                 message: "Account created successfully",

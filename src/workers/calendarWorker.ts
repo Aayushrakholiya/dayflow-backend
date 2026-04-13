@@ -1,4 +1,14 @@
+/*  
+*  FILE          : calendarWorker.ts 
+*  PROJECT       : PROG3221 - capstone
+*  PROGRAMMER    : Ayushkumar Rakholiya, Jal Shah, Darsh Patel and Virajsinh Solanki 
+*  FIRST VERSION : 2026-02-01 
+*  DESCRIPTION   : 
+*    Background worker for processing calendar synchronization jobs.
+*/ 
+
 import { Worker } from "bullmq";
+import { redisConfig } from "../redis";
 
 export const calendarWorker = new Worker(
   "calendar-sync",
@@ -7,13 +17,7 @@ export const calendarWorker = new Worker(
     console.log("Processing job:", job.name, job.data);
     return { done: true };
   },
-  {
-    connection: {
-      host: process.env.REDIS_HOST || "localhost",
-      port: parseInt(process.env.REDIS_PORT || "6379"),
-      maxRetriesPerRequest: null,
-    },
-  }
+  { connection: redisConfig }
 );
 
 calendarWorker.on("completed", (job) => console.log("Job completed:", job.id));

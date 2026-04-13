@@ -1,5 +1,11 @@
-// All data comes from ECCC / MSC GeoMet
-// ECCC Open Licence v2.1
+/*  
+*  FILE          : weather.ts 
+*  PROJECT       : PROG3221 - capstone
+*  PROGRAMMER    : Ayushkumar Rakholiya, Jal Shah, Darsh Patel and Virajsinh Solanki 
+*  FIRST VERSION : 2026-02-01 
+*  DESCRIPTION   : 
+*    Fetches and returns weather data for Canadian locations using ECCC APIs.
+*/ 
 
 import express from "express";
 
@@ -27,6 +33,7 @@ export interface WeatherResponse {
   icon: string;
   tip: WeatherTip;
   city: string;
+  forecast: ForecastDay[];
   source: "MSC GeoMet";
   attribution: string;
 }
@@ -50,12 +57,24 @@ interface CityPageData {
   windKmh: number | null;
   tempMaxC: number | null;
   tempMinC: number | null;
+  forecast: ForecastDay[];
 }
 
 // Temperature and humidity from the nearest physical weather station.
 interface SwobData {
   tempC: number | null;
   humidity: number | null;
+}
+
+// One upcoming forecast day entry returned to the frontend.
+interface ForecastDay {
+  label: string;           // Period name from ECCC — e.g. "Tuesday", "Wednesday"
+  tempHighC: number | null;
+  tempLowC: number | null;
+  tempHighF: number | null;
+  tempLowF: number | null;
+  icon: string;
+  desc: string;
 }
 
 // City list is downloaded once on startup and kept in memory for the whole process.
@@ -209,6 +228,55 @@ function buildTip(tempC: number | null, desc: string): WeatherTip {
   return { text: "Mild and pleasant outside.", emoji: "🌿" };
 }
 
+// Parses up to maxDays upcoming day-time forecast entries from a city page XML string.
+// ECCC alternates day and night periods so overnight entries are skipped.
+function parseForecastDays(xml: string, maxDays: number): ForecastDay[] {
+  const blocks = xml.match(/<forecast>[\s\S]*?<\/forecast>/gi) ?? [];
+  const days: ForecastDay[] = [];
+
+  for (const block of blocks) {
+    if (days.length >= maxDays) {
+      break;
+    }
+
+    const label = xmlText(block, "period");
+    if (!label) {
+      continue;
+    }
+
+    // Skip overnight entries — they do not have a daytime high
+    if (/night/i.test(label)) {
+      continue;
+    }
+
+    // Skip "Today" — current conditions are already shown 
+    if (/^today$/i.test(label)) {
+      continue;
+    }
+
+    // The abbreviated textSummary is the short condition phrase used for the icon
+    const abbrevBlock = /<abbreviatedForecast[^>]*>([\s\S]*?)<\/abbreviatedForecast>/i.exec(block)?.[1] ?? "";
+    const desc = xmlText(abbrevBlock, "textSummary") || xmlText(block, "textSummary");
+
+    const highRaw = parseFloat(xmlTextAttr(block, "temperature", "class", "high"));
+    const lowRaw  = parseFloat(xmlTextAttr(block, "temperature", "class", "low"));
+    const tempHighC = isNaN(highRaw) ? null : Math.round(highRaw);
+    const tempLowC  = isNaN(lowRaw)  ? null : Math.round(lowRaw);
+
+    days.push({
+      label,
+      tempHighC,
+      tempLowC,
+      tempHighF: cToF(tempHighC),
+      tempLowF:  cToF(tempLowC),
+      icon: descToIcon(desc),
+      desc,
+    });
+  }
+
+  return days;
+}
+
 // Downloads the ECCC city site list CSV and caches it in memory.
 async function loadCitySiteList(): Promise<CityRecord[]> {
   if (cityCache !== null) {
@@ -349,7 +417,9 @@ async function fetchCityPageXML(site: CityRecord): Promise<CityPageData | null> 
       const tempMaxC = isNaN(highRaw) ? null : Math.round(highRaw);
       const tempMinC = isNaN(lowRaw) ? null : Math.round(lowRaw);
 
-      return { city, desc, tempC, feelsC, humidity, windKmh, tempMaxC, tempMinC };
+      const forecast = parseForecastDays(xml, 3);
+
+      return { city, desc, tempC, feelsC, humidity, windKmh, tempMaxC, tempMinC, forecast };
     } catch {
       continue;
     }
@@ -506,6 +576,7 @@ export default function createWeatherRouter() {
         icon: descToIcon(desc),
         tip: buildTip(tempC, desc),
         city,
+        forecast: xml?.forecast ?? [],
         source: "MSC GeoMet",
         attribution: ATTRIBUTION,
       } as WeatherResponse);

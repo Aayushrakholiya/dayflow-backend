@@ -4,21 +4,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.registerPasswordResetRoutes = registerPasswordResetRoutes;
-const node_process_1 = __importDefault(require("node:process"));
-const nodemailer_1 = __importDefault(require("nodemailer"));
 const argon2_1 = __importDefault(require("argon2"));
-const client_1 = require("@prisma/client");
-const adapter_pg_1 = require("@prisma/adapter-pg");
-const pg_1 = __importDefault(require("pg"));
-// -------------------- Prisma + Neon (same style as signup/login) --------------------
-// Create PostgreSQL pool
-const pool = new pg_1.default.Pool({
-    connectionString: node_process_1.default.env.DATABASE_URL,
-});
-// Create adapter
-const adapter = new adapter_pg_1.PrismaPg(pool);
-// Initialize PrismaClient with adapter
-const prisma = new client_1.PrismaClient({ adapter });
+const db_1 = __importDefault(require("./db"));
 // In-memory OTP store (email -> otp record)
 const otpStore = new Map();
 // Rate limiting store (email -> request timestamps)
@@ -69,36 +56,43 @@ function checkRateLimit(email) {
     rateLimitStore.set(email, recentRequests);
     return true;
 }
-function getTransporter() {
-    const user = node_process_1.default.env.EMAIL_USER;
-    const pass = node_process_1.default.env.EMAIL_PASS;
-    if (!user || !pass) {
-        throw new Error("Missing EMAIL_USER or EMAIL_PASS in environment. Create backend/.env with EMAIL_USER and EMAIL_PASS.");
-    }
-    return nodemailer_1.default.createTransport({
-        service: "gmail",
-        auth: { user, pass },
-    });
-}
 async function sendOtpEmail(to, code) {
-    const transporter = getTransporter();
-    await transporter.sendMail({
-        from: node_process_1.default.env.EMAIL_USER,
-        to,
-        subject: "DayFlow Password Reset OTP",
-        html: `
-      <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: 0 auto;">
-        <h2 style="color: #333;">DayFlow Password Reset</h2>
-        <p>Your password reset OTP is:</p>
-        <div style="background-color: #f4f4f4; padding: 15px; text-align: center; font-size: 24px; font-weight: bold; letter-spacing: 5px; margin: 20px 0;">
-          ${code}
+    const apiKey = process.env.BREVO_API_KEY;
+    const fromEmail = process.env.EMAIL_FROM;
+    const fromName = process.env.EMAIL_FROM_NAME ?? "DayFlow";
+    if (!apiKey)
+        throw new Error("Missing BREVO_API_KEY in environment.");
+    if (!fromEmail)
+        throw new Error("Missing EMAIL_FROM in environment.");
+    const res = await fetch("https://api.brevo.com/v3/smtp/email", {
+        method: "POST",
+        headers: {
+            "accept": "application/json",
+            "api-key": apiKey,
+            "content-type": "application/json",
+        },
+        body: JSON.stringify({
+            sender: { name: fromName, email: fromEmail },
+            to: [{ email: to }],
+            subject: "DayFlow Password Reset OTP",
+            htmlContent: `
+        <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #333;">DayFlow Password Reset</h2>
+          <p>Your password reset OTP is:</p>
+          <div style="background-color: #f4f4f4; padding: 15px; text-align: center; font-size: 24px; font-weight: bold; letter-spacing: 5px; margin: 20px 0;">
+            ${code}
+          </div>
+          <p style="color: #666;">This code expires in 5 minutes.</p>
+          <p style="color: #999; font-size: 12px; margin-top: 30px;">If you didn't request this code, please ignore this email.</p>
         </div>
-        <p style="color: #666;">This code expires in 5 minutes.</p>
-        <p style="color: #999; font-size: 12px; margin-top: 30px;">If you didn't request this code, please ignore this email.</p>
-      </div>
-    `,
-        text: `Your DayFlow OTP is: ${code}\n\nThis code expires in 5 minutes.\n\nIf you didn't request this code, please ignore this email.`,
+      `,
+            textContent: `Your DayFlow OTP is: ${code}\n\nThis code expires in 5 minutes.\n\nIf you didn't request this code, please ignore this email.`,
+        }),
     });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw Object.assign(new Error(err.message ?? "Brevo email send failed"), { code: "BREVO_ERROR", brevoError: err });
+    }
 }
 // -------------------- Route Registration --------------------
 /**
@@ -136,7 +130,7 @@ function registerPasswordResetRoutes(app) {
             // Check if user exists
             let user;
             try {
-                user = await prisma.user.findUnique({
+                user = await db_1.default.user.findUnique({
                     where: { email },
                     select: { id: true, email: true },
                 });
@@ -161,29 +155,22 @@ function registerPasswordResetRoutes(app) {
             // Send OTP email
             try {
                 await sendOtpEmail(email, code);
-                console.log(`OTP sent to ${email}: ${code}`); // For development/testing
             }
             catch (emailError) {
-                console.error("Email sending error:", emailError);
                 // Clean up OTP if email fails
                 otpStore.delete(email);
                 // Handle specific email errors
-                if (typeof emailError === "object" &&
-                    emailError !== null &&
-                    "code" in emailError) {
-                    const err_code = emailError.code;
-                    if (err_code === "EAUTH") {
-                        return res.status(500).json({
-                            message: "Email service authentication failed. Please contact support.",
-                            code: "EMAIL_AUTH_ERROR",
-                        });
-                    }
-                    if (err_code === "ECONNECTION" || err_code === "ETIMEDOUT") {
-                        return res.status(500).json({
-                            message: "Unable to connect to email service. Please try again later.",
-                            code: "EMAIL_CONNECTION_ERROR",
-                        });
-                    }
+                if (emailError.code === "EAUTH") {
+                    return res.status(500).json({
+                        message: "Email service authentication failed. Please contact support.",
+                        code: "EMAIL_AUTH_ERROR",
+                    });
+                }
+                if (emailError.code === "ECONNECTION" || emailError.code === "ETIMEDOUT") {
+                    return res.status(500).json({
+                        message: "Unable to connect to email service. Please try again later.",
+                        code: "EMAIL_CONNECTION_ERROR",
+                    });
                 }
                 return res.status(500).json({
                     message: "Failed to send OTP email. Please try again later.",
@@ -195,8 +182,8 @@ function registerPasswordResetRoutes(app) {
                 code: "OTP_SENT"
             });
         }
-        catch (_err) {
-            console.error("Unexpected error in forgot-password:", _err instanceof Error ? _err.message : _err);
+        catch (err) {
+            console.error("Unexpected error in forgot-password:", err?.message || err);
             return res.status(500).json({
                 message: "An unexpected error occurred. Please try again.",
                 code: "INTERNAL_ERROR",
@@ -267,8 +254,8 @@ function registerPasswordResetRoutes(app) {
                 code: "OTP_VERIFIED"
             });
         }
-        catch (_err) {
-            console.error("Unexpected error in verify-otp:", _err instanceof Error ? _err.message : _err);
+        catch (err) {
+            console.error("Unexpected error in verify-otp:", err?.message || err);
             return res.status(500).json({
                 message: "An unexpected error occurred. Please try again.",
                 code: "INTERNAL_ERROR",
@@ -342,7 +329,7 @@ function registerPasswordResetRoutes(app) {
             // Check if user exists
             let existingUser;
             try {
-                existingUser = await prisma.user.findUnique({
+                existingUser = await db_1.default.user.findUnique({
                     where: { email },
                     select: { id: true },
                 });
@@ -375,7 +362,7 @@ function registerPasswordResetRoutes(app) {
             }
             // Update password in database
             try {
-                await prisma.user.update({
+                await db_1.default.user.update({
                     where: { email },
                     data: { password: hashed },
                 });
@@ -394,8 +381,8 @@ function registerPasswordResetRoutes(app) {
                 code: "PASSWORD_RESET_SUCCESS"
             });
         }
-        catch (_err) {
-            console.error("Unexpected error in reset-password:", _err instanceof Error ? _err.message : _err);
+        catch (err) {
+            console.error("Unexpected error in reset-password:", err?.message || err);
             return res.status(500).json({
                 message: "An unexpected error occurred. Please try again.",
                 code: "INTERNAL_ERROR",

@@ -1,22 +1,16 @@
-// backend/src/login.ts
-import process from "node:process";
+/*  
+*  FILE          : login.ts 
+*  PROJECT       : PROG3221 - capstone
+*  PROGRAMMER    : Ayushkumar Rakholiya, Jal Shah, Darsh Patel and Virajsinh Solanki 
+*  FIRST VERSION : 2026-02-01 
+*  DESCRIPTION   : 
+*    Authenticates user credentials, verifies password, and returns JWT token.
+*/ 
+
 import express from "express";
-import { PrismaClient } from "@prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
-import pg from "pg";
+import prisma from "./db";
 import argon2 from "argon2";
 import jwt from "jsonwebtoken";
-
-// Create PostgreSQL pool
-const pool = new pg.Pool({
-  connectionString: process.env.DATABASE_URL,
-});
-
-// Create adapter
-const adapter = new PrismaPg(pool);
-
-// Initialize PrismaClient with adapter
-const prisma = new PrismaClient({ adapter });
 
 export default function createLoginRouter() {
   const router = express.Router();
@@ -101,7 +95,7 @@ export default function createLoginRouter() {
       const token = jwt.sign(
         { userId: existingUser.id, fullName: existingUser.fullName, email: existingUser.email },
         secret,
-        { expiresIn: "30d", algorithm: "HS256" }
+        { expiresIn: "7d", algorithm: "HS256" }
       );
 
       return res.status(200).json({

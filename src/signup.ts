@@ -1,21 +1,16 @@
-import process from "node:process";
+/*  
+*  FILE          : signup.ts 
+*  PROJECT       : PROG3221 - capstone
+*  PROGRAMMER    : Ayushkumar Rakholiya, Jal Shah, Darsh Patel and Virajsinh Solanki 
+*  FIRST VERSION : 2026-02-01 
+*  DESCRIPTION   : 
+*    Validates user input, hashes password, creates user account, and returns JWT token.
+*/ 
+
 import express from "express";
-import { PrismaClient } from "@prisma/client";
-import { PrismaPg } from '@prisma/adapter-pg';
-import pg from 'pg';
+import prisma from "./db";
 import argon2 from 'argon2';
 import jwt from 'jsonwebtoken';
-
-// Create PostgreSQL pool
-const pool = new pg.Pool({
-  connectionString: process.env.DATABASE_URL,
-});
-
-// Create adapter
-const adapter = new PrismaPg(pool);
-
-// Initialize PrismaClient with adapter
-const prisma = new PrismaClient({ adapter });
 
 
 export default function createSignupRouter() {
@@ -132,7 +127,7 @@ router.post("/signup", async (req, res) => {
     const token = jwt.sign(
       { userId: newUser.id, fullName: newUser.fullName, email: newUser.email },
       secret,
-      { expiresIn: "30d", algorithm: "HS256" }
+      { expiresIn: "7d", algorithm: "HS256" }
     );
 
     // this will send the success message 

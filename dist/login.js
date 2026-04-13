@@ -1,25 +1,21 @@
 "use strict";
+/*
+*  FILE          : login.ts
+*  PROJECT       : PROG3221 - capstone
+*  PROGRAMMER    : Ayushkumar Rakholiya, Jal Shah, Darsh Patel and Virajsinh Solanki
+*  FIRST VERSION : 2026-02-01
+*  DESCRIPTION   :
+*    Authenticates user credentials, verifies password, and returns JWT token.
+*/
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.default = createLoginRouter;
-// backend/src/login.ts
-const node_process_1 = __importDefault(require("node:process"));
 const express_1 = __importDefault(require("express"));
-const client_1 = require("@prisma/client");
-const adapter_pg_1 = require("@prisma/adapter-pg");
-const pg_1 = __importDefault(require("pg"));
+const db_1 = __importDefault(require("./db"));
 const argon2_1 = __importDefault(require("argon2"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
-// Create PostgreSQL pool
-const pool = new pg_1.default.Pool({
-    connectionString: node_process_1.default.env.DATABASE_URL,
-});
-// Create adapter
-const adapter = new adapter_pg_1.PrismaPg(pool);
-// Initialize PrismaClient with adapter
-const prisma = new client_1.PrismaClient({ adapter });
 function createLoginRouter() {
     const router = express_1.default.Router();
     // this will validate that if the user has entered proper email or not like the format of it
@@ -64,7 +60,7 @@ function createLoginRouter() {
                 });
             }
             // this will find the user by email
-            const existingUser = await prisma.user.findUnique({
+            const existingUser = await db_1.default.user.findUnique({
                 where: { email },
             });
             if (!existingUser) {
@@ -80,11 +76,11 @@ function createLoginRouter() {
                 });
             }
             // Sign a JWT containing userId, fullName and email
-            const secret = node_process_1.default.env.JWT_SECRET;
+            const secret = process.env.JWT_SECRET;
             if (!secret) {
                 return res.status(500).json({ message: "Server misconfiguration." });
             }
-            const token = jsonwebtoken_1.default.sign({ userId: existingUser.id, fullName: existingUser.fullName, email: existingUser.email }, secret, { expiresIn: "30d", algorithm: "HS256" });
+            const token = jsonwebtoken_1.default.sign({ userId: existingUser.id, fullName: existingUser.fullName, email: existingUser.email }, secret, { expiresIn: "7d", algorithm: "HS256" });
             return res.status(200).json({
                 message: "Login successful",
                 token,

@@ -1,6 +1,12 @@
 "use strict";
-// All data comes from ECCC / MSC GeoMet
-// ECCC Open Licence v2.1
+/*
+*  FILE          : weather.ts
+*  PROJECT       : PROG3221 - capstone
+*  PROGRAMMER    : Ayushkumar Rakholiya, Jal Shah, Darsh Patel and Virajsinh Solanki
+*  FIRST VERSION : 2026-02-01
+*  DESCRIPTION   :
+*    Fetches and returns weather data for Canadian locations using ECCC APIs.
+*/
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -149,6 +155,46 @@ function buildTip(tempC, desc) {
     }
     return { text: "Mild and pleasant outside.", emoji: "🌿" };
 }
+// Parses up to maxDays upcoming day-time forecast entries from a city page XML string.
+// ECCC alternates day and night periods so overnight entries are skipped.
+function parseForecastDays(xml, maxDays) {
+    const blocks = xml.match(/<forecast>[\s\S]*?<\/forecast>/gi) ?? [];
+    const days = [];
+    for (const block of blocks) {
+        if (days.length >= maxDays) {
+            break;
+        }
+        const label = xmlText(block, "period");
+        if (!label) {
+            continue;
+        }
+        // Skip overnight entries — they do not have a daytime high
+        if (/night/i.test(label)) {
+            continue;
+        }
+        // Skip "Today" — current conditions are already shown 
+        if (/^today$/i.test(label)) {
+            continue;
+        }
+        // The abbreviated textSummary is the short condition phrase used for the icon
+        const abbrevBlock = /<abbreviatedForecast[^>]*>([\s\S]*?)<\/abbreviatedForecast>/i.exec(block)?.[1] ?? "";
+        const desc = xmlText(abbrevBlock, "textSummary") || xmlText(block, "textSummary");
+        const highRaw = parseFloat(xmlTextAttr(block, "temperature", "class", "high"));
+        const lowRaw = parseFloat(xmlTextAttr(block, "temperature", "class", "low"));
+        const tempHighC = isNaN(highRaw) ? null : Math.round(highRaw);
+        const tempLowC = isNaN(lowRaw) ? null : Math.round(lowRaw);
+        days.push({
+            label,
+            tempHighC,
+            tempLowC,
+            tempHighF: cToF(tempHighC),
+            tempLowF: cToF(tempLowC),
+            icon: descToIcon(desc),
+            desc,
+        });
+    }
+    return days;
+}
 // Downloads the ECCC city site list CSV and caches it in memory.
 async function loadCitySiteList() {
     if (cityCache !== null) {
@@ -257,7 +303,8 @@ async function fetchCityPageXML(site) {
             const lowRaw = parseFloat(xmlTextAttr(xml, "temperature", "class", "low"));
             const tempMaxC = isNaN(highRaw) ? null : Math.round(highRaw);
             const tempMinC = isNaN(lowRaw) ? null : Math.round(lowRaw);
-            return { city, desc, tempC, feelsC, humidity, windKmh, tempMaxC, tempMinC };
+            const forecast = parseForecastDays(xml, 3);
+            return { city, desc, tempC, feelsC, humidity, windKmh, tempMaxC, tempMinC, forecast };
         }
         catch {
             continue;
@@ -388,6 +435,7 @@ function createWeatherRouter() {
                 icon: descToIcon(desc),
                 tip: buildTip(tempC, desc),
                 city,
+                forecast: xml?.forecast ?? [],
                 source: "MSC GeoMet",
                 attribution: ATTRIBUTION,
             });

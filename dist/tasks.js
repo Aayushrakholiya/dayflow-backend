@@ -1,26 +1,30 @@
 "use strict";
+/*
+*  FILE          : tasks.ts
+*  PROJECT       : PROG3221 - capstone
+*  PROGRAMMER    : Ayushkumar Rakholiya, Jal Shah, Darsh Patel and Virajsinh Solanki
+*  FIRST VERSION : 2026-02-01
+*  DESCRIPTION   :
+*    CRUD routes for tasks with notifications on create and delete.
+*/
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.default = createTasksRouter;
-const node_process_1 = __importDefault(require("node:process"));
 const express_1 = __importDefault(require("express"));
-const client_1 = require("@prisma/client");
-const adapter_pg_1 = require("@prisma/adapter-pg");
-const pg_1 = __importDefault(require("pg"));
-// Create PostgreSQL pool
-const pool = new pg_1.default.Pool({
-    connectionString: node_process_1.default.env.DATABASE_URL,
-});
-// Create adapter
-const adapter = new adapter_pg_1.PrismaPg(pool);
-// Initialize PrismaClient with adapter
-const prisma = new client_1.PrismaClient({ adapter });
+const db_1 = __importDefault(require("./db"));
+const notificationService_1 = require("./services/notificationService");
+//-----------------------------------
+function parseLocalDate(dateString) {
+    const [year, month, day] = dateString.split("-").map(Number);
+    return new Date(year, month - 1, day);
+}
+//----------------------------------- 
 function createTasksRouter() {
     const router = express_1.default.Router();
     // Middleware: Verify user
-    const verifyUser = (req, _res, next) => {
+    const verifyUser = (req, res, next) => {
         req.userId = (req.body?.userId || req.headers["x-user-id"]);
         next();
     };
@@ -29,10 +33,10 @@ function createTasksRouter() {
     router.post("/create", async (req, res) => {
         try {
             const { title, dueDate, startHour, endHour, durationMinutes, color, userId } = req.body;
-            const task = await prisma.task.create({
+            const task = await db_1.default.task.create({
                 data: {
                     title,
-                    dueDate: new Date(dueDate),
+                    dueDate: new Date(dueDate || Date.now()),
                     startHour,
                     endHour,
                     durationMinutes,
@@ -40,6 +44,7 @@ function createTasksRouter() {
                     userId: parseInt(userId),
                 },
             });
+            await (0, notificationService_1.createTaskCreatedNotification)(task);
             return res.status(201).json({ success: true, task });
         }
         catch (error) {
@@ -51,7 +56,7 @@ function createTasksRouter() {
     router.get("/", async (req, res) => {
         try {
             const userId = req.query.userId || req.userId;
-            const tasks = await prisma.task.findMany({
+            const tasks = await db_1.default.task.findMany({
                 where: { userId: parseInt(userId) },
                 orderBy: { dueDate: "asc" },
             });
@@ -67,11 +72,12 @@ function createTasksRouter() {
         try {
             const { id } = req.params;
             const { title, dueDate, startHour, endHour, durationMinutes, color } = req.body;
-            const task = await prisma.task.update({
+            const taskId = parseInt(id);
+            const task = await db_1.default.task.update({
                 where: { id: parseInt(id) },
                 data: {
                     title,
-                    dueDate: new Date(dueDate),
+                    dueDate: new Date(dueDate || Date.now()),
                     startHour,
                     endHour,
                     durationMinutes,
@@ -89,8 +95,20 @@ function createTasksRouter() {
     router.delete("/:id", async (req, res) => {
         try {
             const { id } = req.params;
-            await prisma.task.delete({
+            const taskId = parseInt(id);
+            const existingTask = await db_1.default.task.findUnique({
+                where: { id: taskId },
+            });
+            if (!existingTask) {
+                return res.status(404).json({ message: "Task not found" });
+            }
+            await db_1.default.task.delete({
                 where: { id: parseInt(id) },
+            });
+            await (0, notificationService_1.createTaskDeletedNotification)({
+                userId: existingTask.userId,
+                title: existingTask.title,
+                startHour: existingTask.startHour,
             });
             return res.status(200).json({ success: true, message: "Task deleted" });
         }

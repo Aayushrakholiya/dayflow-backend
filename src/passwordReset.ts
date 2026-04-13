@@ -1,26 +1,15 @@
-// backend/src/routes/passwordReset.ts
-// express removed - not used, types imported from express package
+/*  
+*  FILE          : passwordReset.ts 
+*  PROJECT       : PROG3221 - capstone
+*  PROGRAMMER    : Ayushkumar Rakholiya, Jal Shah, Darsh Patel and Virajsinh Solanki 
+*  FIRST VERSION : 2026-02-01 
+*  DESCRIPTION   : 
+*    Handles multi-step password reset with OTP verification and rate limiting.
+*/ 
+import express from "express";
 import type { Express, Request, Response } from "express";
-import process from "node:process";
-import nodemailer from "nodemailer";
 import argon2 from "argon2";
-
-import { PrismaClient } from "@prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
-import pg from "pg";
-
-// -------------------- Prisma + Neon (same style as signup/login) --------------------
-
-// Create PostgreSQL pool
-const pool = new pg.Pool({
-  connectionString: process.env.DATABASE_URL,
-});
-
-// Create adapter
-const adapter = new PrismaPg(pool);
-
-// Initialize PrismaClient with adapter
-const prisma = new PrismaClient({ adapter });
+import prisma from "./db";
 
 // -------------------- OTP Store --------------------
 
@@ -99,42 +88,47 @@ function checkRateLimit(email: string): boolean {
   return true;
 }
 
-function getTransporter() {
-  const user = process.env.EMAIL_USER;
-  const pass = process.env.EMAIL_PASS;
+async function sendOtpEmail(to: string, code: string) {
+  const apiKey = process.env.BREVO_API_KEY;
+  const fromEmail = process.env.EMAIL_FROM;
+  const fromName = process.env.EMAIL_FROM_NAME ?? "DayFlow";
 
-  if (!user || !pass) {
-    throw new Error(
-      "Missing EMAIL_USER or EMAIL_PASS in environment. Create backend/.env with EMAIL_USER and EMAIL_PASS."
+  if (!apiKey)    throw new Error("Missing BREVO_API_KEY in environment.");
+  if (!fromEmail) throw new Error("Missing EMAIL_FROM in environment.");
+
+  const res = await fetch("https://api.brevo.com/v3/smtp/email", {
+    method: "POST",
+    headers: {
+      "accept":       "application/json",
+      "api-key":      apiKey,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      sender:      { name: fromName, email: fromEmail },
+      to:          [{ email: to }],
+      subject:     "DayFlow Password Reset OTP",
+      htmlContent: `
+        <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #333;">DayFlow Password Reset</h2>
+          <p>Your password reset OTP is:</p>
+          <div style="background-color: #f4f4f4; padding: 15px; text-align: center; font-size: 24px; font-weight: bold; letter-spacing: 5px; margin: 20px 0;">
+            ${code}
+          </div>
+          <p style="color: #666;">This code expires in 5 minutes.</p>
+          <p style="color: #999; font-size: 12px; margin-top: 30px;">If you didn't request this code, please ignore this email.</p>
+        </div>
+      `,
+      textContent: `Your DayFlow OTP is: ${code}\n\nThis code expires in 5 minutes.\n\nIf you didn't request this code, please ignore this email.`,
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({})) as any;
+    throw Object.assign(
+      new Error(err.message ?? "Brevo email send failed"),
+      { code: "BREVO_ERROR", brevoError: err }
     );
   }
-
-  return nodemailer.createTransport({
-    service: "gmail",
-    auth: { user, pass },
-  });
-}
-
-async function sendOtpEmail(to: string, code: string) {
-  const transporter = getTransporter();
-
-  await transporter.sendMail({
-    from: process.env.EMAIL_USER,
-    to,
-    subject: "DayFlow Password Reset OTP",
-    html: `
-      <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: 0 auto;">
-        <h2 style="color: #333;">DayFlow Password Reset</h2>
-        <p>Your password reset OTP is:</p>
-        <div style="background-color: #f4f4f4; padding: 15px; text-align: center; font-size: 24px; font-weight: bold; letter-spacing: 5px; margin: 20px 0;">
-          ${code}
-        </div>
-        <p style="color: #666;">This code expires in 5 minutes.</p>
-        <p style="color: #999; font-size: 12px; margin-top: 30px;">If you didn't request this code, please ignore this email.</p>
-      </div>
-    `,
-    text: `Your DayFlow OTP is: ${code}\n\nThis code expires in 5 minutes.\n\nIf you didn't request this code, please ignore this email.`,
-  });
 }
 
 // -------------------- Route Registration --------------------
@@ -182,7 +176,7 @@ export function registerPasswordResetRoutes(app: Express) {
           where: { email },
           select: { id: true, email: true },
         });
-      } catch (dbError: unknown) {
+      } catch (dbError: any) {
         console.error("Database error during user lookup:", dbError);
         return res.status(500).json({
           message: "Database error. Please try again later.",
@@ -205,33 +199,24 @@ export function registerPasswordResetRoutes(app: Express) {
       // Send OTP email
       try {
         await sendOtpEmail(email, code);
-        console.log(`OTP sent to ${email}: ${code}`); // For development/testing
-      } catch (emailError: unknown) {
-        console.error("Email sending error:", emailError);
+      } catch (emailError: any) {
 
         // Clean up OTP if email fails
         otpStore.delete(email);
 
         // Handle specific email errors
-        if (
-          typeof emailError === "object" &&
-          emailError !== null &&
-          "code" in emailError
-        ) {
-          const err_code = (emailError as Record<string, string>).code;
-          if (err_code === "EAUTH") {
-            return res.status(500).json({
-              message: "Email service authentication failed. Please contact support.",
-              code: "EMAIL_AUTH_ERROR",
-            });
-          }
+        if (emailError.code === "EAUTH") {
+          return res.status(500).json({
+            message: "Email service authentication failed. Please contact support.",
+            code: "EMAIL_AUTH_ERROR",
+          });
+        }
 
-          if (err_code === "ECONNECTION" || err_code === "ETIMEDOUT") {
-            return res.status(500).json({
-              message: "Unable to connect to email service. Please try again later.",
-              code: "EMAIL_CONNECTION_ERROR",
-            });
-          }
+        if (emailError.code === "ECONNECTION" || emailError.code === "ETIMEDOUT") {
+          return res.status(500).json({
+            message: "Unable to connect to email service. Please try again later.",
+            code: "EMAIL_CONNECTION_ERROR",
+          });
         }
 
         return res.status(500).json({
@@ -245,8 +230,8 @@ export function registerPasswordResetRoutes(app: Express) {
         code: "OTP_SENT" 
       });
 
-    } catch (_err: unknown) {
-      console.error("Unexpected error in forgot-password:", _err instanceof Error ? _err.message : _err);
+    } catch (err: any) {
+      console.error("Unexpected error in forgot-password:", err?.message || err);
       return res.status(500).json({
         message: "An unexpected error occurred. Please try again.",
         code: "INTERNAL_ERROR",
@@ -327,8 +312,8 @@ export function registerPasswordResetRoutes(app: Express) {
         code: "OTP_VERIFIED" 
       });
 
-    } catch (_err: unknown) {
-      console.error("Unexpected error in verify-otp:", _err instanceof Error ? _err.message : _err);
+    } catch (err: any) {
+      console.error("Unexpected error in verify-otp:", err?.message || err);
       return res.status(500).json({
         message: "An unexpected error occurred. Please try again.",
         code: "INTERNAL_ERROR",
@@ -421,7 +406,7 @@ export function registerPasswordResetRoutes(app: Express) {
           where: { email },
           select: { id: true },
         });
-      } catch (dbError: unknown) {
+      } catch (dbError: any) {
         console.error("Database error during user lookup:", dbError);
         return res.status(500).json({
           message: "Database error. Please try again later.",
@@ -441,7 +426,7 @@ export function registerPasswordResetRoutes(app: Express) {
       let hashed: string;
       try {
         hashed = await argon2.hash(newPassword);
-      } catch (hashError: unknown) {
+      } catch (hashError: any) {
         console.error("Password hashing error:", hashError);
         return res.status(500).json({
           message: "Password processing error. Please try again.",
@@ -455,7 +440,7 @@ export function registerPasswordResetRoutes(app: Express) {
           where: { email },
           data: { password: hashed },
         });
-      } catch (dbError: unknown) {
+      } catch (dbError: any) {
         console.error("Database error during password update:", dbError);
         return res.status(500).json({
           message: "Failed to update password. Please try again.",
@@ -471,8 +456,8 @@ export function registerPasswordResetRoutes(app: Express) {
         code: "PASSWORD_RESET_SUCCESS" 
       });
 
-    } catch (_err: unknown) {
-      console.error("Unexpected error in reset-password:", _err instanceof Error ? _err.message : _err);
+    } catch (err: any) {
+      console.error("Unexpected error in reset-password:", err?.message || err);
       return res.status(500).json({
         message: "An unexpected error occurred. Please try again.",
         code: "INTERNAL_ERROR",

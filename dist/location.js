@@ -1,10 +1,17 @@
 "use strict";
+/*
+*  FILE          : location.ts
+*  PROJECT       : PROG3221 - capstone
+*  PROGRAMMER    : Ayushkumar Rakholiya, Jal Shah, Darsh Patel and Virajsinh Solanki
+*  FIRST VERSION : 2026-02-01
+*  DESCRIPTION   :
+*    Provides location geocoding, ETA, directions, and travel time estimation endpoints.
+*/
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.default = createLocationRouter;
-const node_process_1 = __importDefault(require("node:process"));
 const express_1 = __importDefault(require("express"));
 const NOMINATIM_BASE = "https://nominatim.openstreetmap.org";
 const ORS_BASE = "https://api.openrouteservice.org";
@@ -37,31 +44,63 @@ function formatDepartBy(eventStartHour, travelSeconds) {
     const ampm = h24 < 12 ? "AM" : "PM";
     return `Leave by ${h12}:${pad2(mins)} ${ampm}`;
 }
+function simplifyAddress(address) {
+    const parts = address
+        .split(",")
+        .map((p) => p.trim())
+        .filter(Boolean);
+    const queries = [];
+    // Full original
+    queries.push(address);
+    // Drop postal code segment if present (e.g. "N2E 1B6")
+    const withoutPostal = parts.filter((p) => !/^[A-Z]\d[A-Z]\s?\d[A-Z]\d$/i.test(p));
+    if (withoutPostal.length < parts.length)
+        queries.push(withoutPostal.join(", "));
+    // First 3 parts: name + street + city
+    if (parts.length > 3)
+        queries.push(parts.slice(0, 3).join(", "));
+    // First 2 parts: name + city
+    if (parts.length > 2)
+        queries.push(parts.slice(0, 2).join(", "));
+    // Just the street number + street + city (skip business name)
+    if (parts.length > 2)
+        queries.push(parts.slice(1, 3).join(", "));
+    return [...new Set(queries)]; // deduplicate
+}
 async function geocodeAddress(address, country) {
-    const url = new URL(`${NOMINATIM_BASE}/search`);
-    url.searchParams.set("q", address);
-    url.searchParams.set("format", "json");
-    url.searchParams.set("limit", "1");
-    url.searchParams.set("addressdetails", "1");
-    if (country)
-        url.searchParams.set("countrycodes", country.toLowerCase());
-    const res = await fetch(url.toString(), {
-        headers: {
-            "Accept-Language": "en",
-            "User-Agent": "DayflowCalendar/1.0 (help.dayflow@gmail.com)",
-        },
-    });
-    if (!res.ok)
-        return null;
-    const data = await res.json();
-    if (!Array.isArray(data) || data.length === 0)
-        return null;
-    return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
+    const queries = simplifyAddress(address);
+    for (const q of queries) {
+        const url = new URL(`${NOMINATIM_BASE}/search`);
+        url.searchParams.set("q", q);
+        url.searchParams.set("format", "json");
+        url.searchParams.set("limit", "1");
+        url.searchParams.set("addressdetails", "1");
+        if (country)
+            url.searchParams.set("countrycodes", country.toLowerCase());
+        try {
+            const res = await fetch(url.toString(), {
+                headers: {
+                    "Accept-Language": "en",
+                    "User-Agent": "DayflowCalendar/1.0 (help.dayflow@gmail.com)",
+                },
+            });
+            if (!res.ok)
+                continue;
+            const data = await res.json();
+            if (Array.isArray(data) && data.length > 0) {
+                return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
+            }
+        }
+        catch {
+            continue;
+        }
+    }
+    return null;
 }
 function createLocationRouter() {
     const router = express_1.default.Router();
     router.post("/eta", async (req, res) => {
-        const key = node_process_1.default.env.ORS_API_KEY;
+        const key = process.env.ORS_API_KEY;
         if (!key)
             return res.status(503).json({ error: "ORS_API_KEY not configured" });
         const { origin, destination, eventStartHour, mode = "DRIVING", } = req.body;
@@ -163,32 +202,40 @@ function createLocationRouter() {
             return res.status(400).json({ error: "q is required" });
         const UA = "DayflowCalendar/1.0 (help.dayflow@gmail.com)";
         try {
-            const nmUrl = new URL(`${NOMINATIM_BASE}/search`);
-            nmUrl.searchParams.set("q", locationText);
-            nmUrl.searchParams.set("format", "json");
-            nmUrl.searchParams.set("limit", "1");
-            nmUrl.searchParams.set("addressdetails", "1");
-            nmUrl.searchParams.set("extratags", "1");
-            if (country)
-                nmUrl.searchParams.set("countrycodes", country.toLowerCase());
-            const nmRes = await fetch(nmUrl.toString(), {
-                headers: { "Accept-Language": "en", "User-Agent": UA },
-            });
-            if (!nmRes.ok)
-                return res.status(502).json({ error: "Nominatim search failed" });
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const nmData = await nmRes.json();
-            if (!Array.isArray(nmData) || !nmData.length)
+            // Try progressively simplified queries for better Nominatim hit rate
+            const queries = simplifyAddress(locationText);
+            let nmData = [];
+            for (const q of queries) {
+                const nmUrl = new URL(`${NOMINATIM_BASE}/search`);
+                nmUrl.searchParams.set("q", q);
+                nmUrl.searchParams.set("format", "json");
+                nmUrl.searchParams.set("limit", "1");
+                nmUrl.searchParams.set("addressdetails", "1");
+                nmUrl.searchParams.set("extratags", "1");
+                if (country)
+                    nmUrl.searchParams.set("countrycodes", country.toLowerCase());
+                const nmRes = await fetch(nmUrl.toString(), {
+                    headers: { "Accept-Language": "en", "User-Agent": UA },
+                });
+                if (!nmRes.ok)
+                    continue;
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const data = await nmRes.json();
+                if (data.length > 0) {
+                    nmData = data;
+                    break;
+                }
+            }
+            if (!nmData.length)
                 return res.status(404).json({ error: "Place not found" });
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const hit = nmData[0];
-            const hit_as_any = hit;
-            const lat = parseFloat(hit_as_any.lat);
-            const lng = parseFloat(hit_as_any.lon);
-            const osmType = hit_as_any.osm_type;
-            const osmId = hit_as_any.osm_id;
-            const addr = hit_as_any.address ?? {};
-            const extraTags = hit_as_any.extratags ?? {};
+            const lat = parseFloat(hit.lat);
+            const lng = parseFloat(hit.lon);
+            const osmType = hit.osm_type;
+            const osmId = hit.osm_id;
+            const addr = hit.address ?? {};
+            const extraTags = hit.extratags ?? {};
             const formattedAddress = [
                 addr.house_number
                     ? `${addr.house_number} ${addr.road ?? ""}`.trim()
@@ -199,7 +246,7 @@ function createLocationRouter() {
             ]
                 .filter(Boolean)
                 .join(", ");
-            const placeName = hit_as_any.name ||
+            const placeName = hit.name ||
                 extraTags.name ||
                 addr.amenity ||
                 addr.shop ||
@@ -225,12 +272,11 @@ function createLocationRouter() {
                 if (ovRes.ok) {
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     const ovData = await ovRes.json();
-                    const ovData_as_any = ovData;
-                    tags = ovData_as_any?.elements?.[0]?.tags ?? {};
+                    tags = ovData?.elements?.[0]?.tags ?? {};
                 }
             }
-            catch (_err) {
-                console.error("Overpass error:", _err);
+            catch (err) {
+                console.error("Overpass error:", err);
             }
             const ohRaw = tags["opening_hours"];
             let isOpen = null;
@@ -352,15 +398,14 @@ function createLocationRouter() {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const nmData = await nmRes.json();
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const results = (Array.isArray(nmData) ? nmData : []).map((item) => {
-                const item_as_any = item;
-                const addr = item_as_any.address ?? {};
+            const results = nmData.map((item) => {
+                const addr = item.address ?? {};
                 const mainText = addr.amenity ??
                     addr.shop ??
                     addr.building ??
                     addr.road ??
                     addr.neighbourhood ??
-                    item_as_any.display_name.split(",")[0];
+                    item.display_name.split(",")[0];
                 const secondary = [
                     addr.house_number
                         ? `${addr.house_number} ${addr.road ?? ""}`.trim()
@@ -372,13 +417,13 @@ function createLocationRouter() {
                     .filter(Boolean)
                     .join(", ");
                 return {
-                    placeId: String(item_as_any.place_id),
-                    description: item_as_any.display_name,
+                    placeId: String(item.place_id),
+                    description: item.display_name,
                     mainText,
                     secondaryText: secondary,
                     coords: {
-                        lat: parseFloat(item_as_any.lat),
-                        lng: parseFloat(item_as_any.lon),
+                        lat: parseFloat(item.lat),
+                        lng: parseFloat(item.lon),
                     },
                 };
             });

@@ -1,30 +1,37 @@
-import process from "node:process";
+/*  
+*  FILE          : events.ts 
+*  PROJECT       : PROG3221 - capstone
+*  PROGRAMMER    : Ayushkumar Rakholiya, Jal Shah, Darsh Patel and Virajsinh Solanki 
+*  FIRST VERSION : 2026-02-01 
+*  DESCRIPTION   : 
+*    Handles CRUD routes for calendar events with conflict detection and notifications.
+*/ 
+
 import express, { Request, Response, NextFunction } from "express";
-import { PrismaClient } from "@prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
-import pg from "pg";
-
-// Create PostgreSQL pool
-const pool = new pg.Pool({
-  connectionString: process.env.DATABASE_URL,
-});
-
-// Create adapter
-const adapter = new PrismaPg(pool);
-
-// Initialize PrismaClient with adapter
-const prisma = new PrismaClient({ adapter });
+import prisma from "./db";
+import {
+  createEventCreatedNotification,
+  createEventDeletedNotification,
+  createEventUpdatedNotification,
+} from "./services/notificationService";
 
 // Extend Express Request to include userId
 interface AuthRequest extends Request {
   userId?: string | number;
 }
 
+//----------------------------------
+function parseLocalDate(dateString: string): Date {
+  const [year, month, day] = dateString.split("-").map(Number);
+  return new Date(year, month - 1, day, 12, 0, 0, 0);
+}
+//----------------------------------
+
 export default function createEventsRouter() {
   const router = express.Router();
 
   // Middleware: Verify user
-  const verifyUser = (req: AuthRequest, _res: Response, next: NextFunction) => {
+  const verifyUser = (req: AuthRequest, res: Response, next: NextFunction) => {
     req.userId = (req.body?.userId || req.headers["x-user-id"]) as
       | string
       | number
@@ -57,7 +64,7 @@ export default function createEventsRouter() {
       const event = await prisma.event.create({
         data: {
           title,
-          date: new Date(date),
+          date: new Date(date || Date.now()),
           startHour,
           endHour,
           attendees: attendees || [],
@@ -68,6 +75,8 @@ export default function createEventsRouter() {
           userId: parsedUserId,
         },
       });
+
+      await createEventCreatedNotification(event);
 
       return res.status(201).json({ success: true, event });
     } catch (error) {
@@ -85,6 +94,7 @@ export default function createEventsRouter() {
         where: { id: parseInt(id) },
         data: { completed: true, completedAt: new Date() },
       });
+
       res.json({ event });
     } catch (error) {
       console.error("Complete event error:", error);
@@ -137,11 +147,14 @@ export default function createEventsRouter() {
         color,
       } = req.body;
 
+      const eventId = parseInt(id);
+
+
       const event = await prisma.event.update({
         where: { id: parseInt(id) },
         data: {
           title,
-          date: new Date(date),
+          date: new Date(date || Date.now()),
           startHour,
           endHour,
           attendees: attendees || [],
@@ -151,6 +164,8 @@ export default function createEventsRouter() {
           color: color || null,
         },
       });
+
+      await createEventUpdatedNotification(event);
 
       return res.status(200).json({ success: true, event });
     } catch (error) {
@@ -163,10 +178,25 @@ export default function createEventsRouter() {
   router.delete("/:id", async (req, res) => {
     try {
       const { id } = req.params;
+      const eventId = parseInt(id);
+
+      const existingEvent = await prisma.event.findUnique({
+      where: { id: eventId },
+      });
+
+    if (!existingEvent) {
+      return res.status(404).json({ message: "Event not found" });
+    }
 
       await prisma.event.delete({
         where: { id: parseInt(id) },
       });
+
+      await createEventDeletedNotification({
+      userId: existingEvent.userId,
+      title: existingEvent.title,
+      startHour: existingEvent.startHour,
+    });
 
       return res.status(200).json({ success: true, message: "Event deleted" });
     } catch (error) {
