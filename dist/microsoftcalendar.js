@@ -96,15 +96,33 @@ async function getValidAccessToken(userId) {
     return tokenRow.accessToken;
 }
 // ── Graph API fetch helper ────────────────────────────────────────────────────
-async function graphGet(path, accessToken) {
+async function graphGet(path, accessToken, extraHeaders = {}) {
     const res = await fetch(`${GRAPH_API}${path}`, {
-        headers: { Authorization: `Bearer ${accessToken}` },
+        headers: { Authorization: `Bearer ${accessToken}`, ...extraHeaders },
     });
     if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error?.message ?? `Graph API error on ${path}`);
     }
     return res.json();
+}
+// ── Wall-clock parser ─────────────────────────────────────────────────────────
+// Extracts year/month/day/hour/minute directly from the ISO string WITHOUT
+// any timezone conversion so the result is the same on any server timezone.
+// Works after Graph API returns times in the user's mailbox timezone via the
+// "Prefer: outlook.timezone" request header.
+function parseWallClock(iso) {
+    const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?/);
+    if (m) {
+        const year = parseInt(m[1], 10);
+        const month = parseInt(m[2], 10) - 1; // 0-indexed
+        const day = parseInt(m[3], 10);
+        const hours = m[4] != null ? parseInt(m[4], 10) : 0;
+        const minutes = m[5] != null ? parseInt(m[5], 10) : 0;
+        return { wallDate: new Date(year, month, day), hour: hours + minutes / 60 };
+    }
+    const d = new Date(iso);
+    return { wallDate: new Date(d.getFullYear(), d.getMonth(), d.getDate()), hour: 0 };
 }
 // ── Router ────────────────────────────────────────────────────────────────────
 function createMicrosoftCalendarRouter() {
@@ -229,6 +247,19 @@ async function importMicrosoftEvents(userId, accessToken) {
     const now = new Date();
     const oneYearAgo = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate()).toISOString();
     const oneYearAhead = new Date(now.getFullYear() + 1, now.getMonth(), now.getDate()).toISOString();
+    // Fetch the user's mailbox timezone so Graph API returns event times in their
+    // local timezone rather than UTC.  This fixes the deployment vs. localhost
+    // time-shift caused by calling Date.getHours() on a UTC server.
+    let mailboxTimezone = "UTC";
+    try {
+        const settings = await graphGet("/me/mailboxSettings", accessToken);
+        if (settings?.timeZone)
+            mailboxTimezone = settings.timeZone;
+    }
+    catch {
+        // non-fatal — fall back to UTC
+    }
+    const preferHeaders = { Prefer: `outlook.timezone="${mailboxTimezone}"` };
     const calData = await graphGet("/me/calendars", accessToken);
     const calendars = calData.value ?? [];
     const eventsToUpsert = [];
@@ -236,7 +267,7 @@ async function importMicrosoftEvents(userId, accessToken) {
         try {
             let url = `/me/calendars/${cal.id}/calendarView?startDateTime=${oneYearAgo}&endDateTime=${oneYearAhead}&$top=250&$select=id,subject,start,end,location,bodyPreview,attendees,onlineMeeting,isAllDay`;
             while (url) {
-                const data = await graphGet(url.startsWith("/me") ? url : url.replace(GRAPH_API, ""), accessToken);
+                const data = await graphGet(url.startsWith("/me") ? url : url.replace(GRAPH_API, ""), accessToken, preferHeaders);
                 const items = data.value ?? [];
                 for (const ev of items) {
                     if (!ev.id || ev.isCancelled)
@@ -245,11 +276,11 @@ async function importMicrosoftEvents(userId, accessToken) {
                     const endRaw = ev.end?.dateTime;
                     if (!startRaw || !endRaw)
                         continue;
-                    const startDate = new Date(startRaw + (startRaw.endsWith("Z") ? "" : "Z"));
-                    const endDate = new Date(endRaw + (endRaw.endsWith("Z") ? "" : "Z"));
-                    const startHour = startDate.getHours() + startDate.getMinutes() / 60;
-                    const endHour = endDate.getHours() + endDate.getMinutes() / 60;
-                    const eventDate = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+                    // With the Prefer: outlook.timezone header, Graph API now returns
+                    // datetimes in the user's local timezone — parse wall-clock directly
+                    // so the result is server-timezone-independent.
+                    const { wallDate: eventDate, hour: startHour } = parseWallClock(startRaw);
+                    const { hour: endHour } = parseWallClock(endRaw);
                     const attendeeEmails = (ev.attendees ?? [])
                         .map((a) => a.emailAddress?.address)
                         .filter(Boolean);

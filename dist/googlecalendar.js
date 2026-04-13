@@ -188,6 +188,25 @@ function createGoogleCalendarRouter() {
     });
     return router;
 }
+// ── Wall-clock parser ─────────────────────────────────────────────────────────
+// Extracts year/month/day/hour/minute directly from the ISO string WITHOUT
+// any timezone conversion so the result is the same on any server timezone.
+// "2026-04-13T14:30:00-05:00" → wallDate=Apr 13, hour=14.5
+// "2026-04-13"                → wallDate=Apr 13, hour=0  (all-day)
+function parseWallClock(iso) {
+    const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?/);
+    if (m) {
+        const year = parseInt(m[1], 10);
+        const month = parseInt(m[2], 10) - 1; // 0-indexed
+        const day = parseInt(m[3], 10);
+        const hours = m[4] != null ? parseInt(m[4], 10) : 0;
+        const minutes = m[5] != null ? parseInt(m[5], 10) : 0;
+        return { wallDate: new Date(year, month, day), hour: hours + minutes / 60 };
+    }
+    // Fallback (should never be reached for valid Google dateTime strings)
+    const d = new Date(iso);
+    return { wallDate: new Date(d.getFullYear(), d.getMonth(), d.getDate()), hour: 0 };
+}
 // ── Import logic ──────────────────────────────────────────────────────────────
 async function importGoogleEvents(userId, auth) {
     const calendar = googleapis_1.google.calendar({ version: "v3", auth });
@@ -222,11 +241,8 @@ async function importGoogleEvents(userId, auth) {
                     const endRaw = ev.end?.dateTime ?? ev.end?.date;
                     if (!startRaw || !endRaw)
                         continue;
-                    const startDate = new Date(startRaw);
-                    const endDate = new Date(endRaw);
-                    const startHour = startDate.getHours() + startDate.getMinutes() / 60;
-                    const endHour = endDate.getHours() + endDate.getMinutes() / 60;
-                    const eventDate = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+                    const { wallDate: eventDate, hour: startHour } = parseWallClock(startRaw);
+                    const { hour: endHour } = parseWallClock(endRaw);
                     eventsToUpsert.push({
                         externalId: ev.id,
                         source: "google",

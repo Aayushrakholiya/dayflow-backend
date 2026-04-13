@@ -73,8 +73,8 @@ async function processEventNotifications() {
         // logger.info("📌 Found events for today", { count: allTodayEvents.length });
         // Combine regular and imported events
         const allEvents = [
-            ...allTodayEvents.map(e => ({ ...e, isImported: false })),
-            ...allTodayImportedEvents.map(e => ({ ...e, isImported: true }))
+            ...allTodayEvents.map((e) => ({ ...e, isImported: false })),
+            ...allTodayImportedEvents.map((e) => ({ ...e, isImported: true }))
         ];
         // Filter events by START HOUR (not just by date)
         // Calculate actual event start time = date + startHour
@@ -213,7 +213,7 @@ async function processTaskNotifications() {
         });
         // Filter tasks by START HOUR (not just by date)
         // Calculate actual due time = dueDate + startHour
-        const upcomingTasks = allTodayTasks.filter(task => {
+        const upcomingTasks = allTodayTasks.filter((task) => {
             const taskDate = task.dueDate instanceof Date ? task.dueDate : new Date(task.dueDate);
             const taskDueTime = new Date(taskDate);
             // Add startHour to the date to get actual due time (use LOCAL timezone, not UTC)
