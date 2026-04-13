@@ -144,6 +144,7 @@
   "scripts": {
     "dev": "nodemon --watch src --ext ts --exec ts-node src/index.ts",
     "dev:worker": "nodemon --watch src --ext ts --exec ts-node src/worker.ts",
+    "postinstall": "prisma generate",
     "build": "prisma generate && tsc",
     "start": "node dist/index.js"
   },
