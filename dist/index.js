@@ -70,19 +70,13 @@ app.use("/api/google-calendar", (0, googlecalendar_1.default)());
 app.use("/api/microsoft-calendar", (0, microsoftcalendar_1.default)());
 app.use("/api/imported-events", (0, Importedevents_1.createImportedEventsRouter)());
 // ── Serve React SPA fallback for client-side routing ──────────────────────────
-app.get("*", (req, res) => {
-    if (!req.path.startsWith("/api")) {
-        res.sendFile(path_1.default.join(frontendPath, "index.html"));
+app.use((req, res, next) => {
+    if (req.path.startsWith("/api")) {
+        return next();
     }
-    else {
-        res.status(404).json({
-            message: "Route not found",
-            path: req.path,
-            method: req.method,
-        });
-    }
+    res.sendFile(path_1.default.join(frontendPath, "index.html"));
 });
-// ── 404 handler (unreachable due to above catch-all) ──────────────────────────
+// ── 404 handler for API routes ────────────────────────────────────────────────
 app.use((req, res) => {
     res.status(404).json({
         message: "Route not found",
