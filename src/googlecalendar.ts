@@ -225,11 +225,13 @@ function parseWallClock(iso: string): { wallDate: Date; hour: number } {
     const day     = parseInt(m[3], 10);
     const hours   = m[4] != null ? parseInt(m[4], 10) : 0;
     const minutes = m[5] != null ? parseInt(m[5], 10) : 0;
-    return { wallDate: new Date(year, month, day), hour: hours + minutes / 60 };
+    // Use Date.UTC so the stored date is always UTC midnight for the
+    // wall-clock date — independent of the server's local timezone.
+    return { wallDate: new Date(Date.UTC(year, month, day)), hour: hours + minutes / 60 };
   }
   // Fallback (should never be reached for valid Google dateTime strings)
   const d = new Date(iso);
-  return { wallDate: new Date(d.getFullYear(), d.getMonth(), d.getDate()), hour: 0 };
+  return { wallDate: new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())), hour: 0 };
 }
 
 // ── Import logic ──────────────────────────────────────────────────────────────
@@ -245,16 +247,8 @@ async function importGoogleEvents(
   const calendarList = calListRes.data.items ?? [];
 
   const now = new Date();
-  const oneYearAgo = new Date(
-    now.getFullYear() - 1,
-    now.getMonth(),
-    now.getDate(),
-  );
-  const oneYearAhead = new Date(
-    now.getFullYear() + 1,
-    now.getMonth(),
-    now.getDate(),
-  );
+  const oneYearAgo   = new Date(Date.UTC(now.getUTCFullYear() - 1, now.getUTCMonth(), now.getUTCDate()));
+  const oneYearAhead = new Date(Date.UTC(now.getUTCFullYear() + 1, now.getUTCMonth(), now.getUTCDate()));
 
   const eventsToUpsert: Parameters<typeof upsertImportedEvents>[1] = [];
 

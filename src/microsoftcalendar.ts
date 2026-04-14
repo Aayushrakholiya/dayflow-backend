@@ -131,6 +131,9 @@ async function graphGet(
 // any timezone conversion so the result is the same on any server timezone.
 // Works after Graph API returns times in the user's mailbox timezone via the
 // "Prefer: outlook.timezone" request header.
+// Dates are stored as UTC midnight (Date.UTC) so the YYYY-MM-DD portion
+// serialised by the API always matches the original wall-clock date regardless
+// of the server's local timezone.
 function parseWallClock(iso: string): { wallDate: Date; hour: number } {
   const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?/);
   if (m) {
@@ -139,10 +142,10 @@ function parseWallClock(iso: string): { wallDate: Date; hour: number } {
     const day     = parseInt(m[3], 10);
     const hours   = m[4] != null ? parseInt(m[4], 10) : 0;
     const minutes = m[5] != null ? parseInt(m[5], 10) : 0;
-    return { wallDate: new Date(year, month, day), hour: hours + minutes / 60 };
+    return { wallDate: new Date(Date.UTC(year, month, day)), hour: hours + minutes / 60 };
   }
   const d = new Date(iso);
-  return { wallDate: new Date(d.getFullYear(), d.getMonth(), d.getDate()), hour: 0 };
+  return { wallDate: new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())), hour: 0 };
 }
 
 // ── Router ────────────────────────────────────────────────────────────────────
@@ -279,8 +282,8 @@ async function importMicrosoftEvents(
   accessToken: string,
 ): Promise<number> {
   const now          = new Date();
-  const oneYearAgo   = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate()).toISOString();
-  const oneYearAhead = new Date(now.getFullYear() + 1, now.getMonth(), now.getDate()).toISOString();
+  const oneYearAgo   = new Date(Date.UTC(now.getUTCFullYear() - 1, now.getUTCMonth(), now.getUTCDate())).toISOString();
+  const oneYearAhead = new Date(Date.UTC(now.getUTCFullYear() + 1, now.getUTCMonth(), now.getUTCDate())).toISOString();
 
   // Fetch the user's mailbox timezone so Graph API returns event times in their
   // local timezone rather than UTC.  This fixes the deployment vs. localhost
