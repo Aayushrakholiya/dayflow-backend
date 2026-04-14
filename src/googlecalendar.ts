@@ -212,26 +212,53 @@ export default function createGoogleCalendarRouter() {
   return router;
 }
 
-// ── Wall-clock parser ─────────────────────────────────────────────────────────
-// Extracts year/month/day/hour/minute directly from the ISO string WITHOUT
-// any timezone conversion so the result is the same on any server timezone.
-// "2026-04-13T14:30:00-05:00" → wallDate=Apr 13, hour=14.5
-// "2026-04-13"                → wallDate=Apr 13, hour=0  (all-day)
-function parseWallClock(iso: string): { wallDate: Date; hour: number } {
-  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?/);
-  if (m) {
-    const year    = parseInt(m[1], 10);
-    const month   = parseInt(m[2], 10) - 1; // 0-indexed
-    const day     = parseInt(m[3], 10);
-    const hours   = m[4] != null ? parseInt(m[4], 10) : 0;
-    const minutes = m[5] != null ? parseInt(m[5], 10) : 0;
-    // Use Date.UTC so the stored date is always UTC midnight for the
-    // wall-clock date — independent of the server's local timezone.
-    return { wallDate: new Date(Date.UTC(year, month, day)), hour: hours + minutes / 60 };
+// ── Eastern Time constant ─────────────────────────────────────────────────────
+// America/Toronto automatically switches between EST (UTC-5) and EDT (UTC-4)
+// based on Canada's DST rules — no manual handling needed.
+const EASTERN_TZ = "America/Toronto";
+
+// ── Eastern Time converter ────────────────────────────────────────────────────
+// Converts an ISO datetime string (with or without UTC offset) to Eastern Time,
+// then returns the wall-clock date and fractional hour in ET.
+//
+// Examples:
+//   "2026-04-13T18:30:00Z"       → wallDate=Apr 13, hour=14.5  (EDT, UTC-4)
+//   "2026-04-13T14:30:00-04:00"  → wallDate=Apr 13, hour=14.5  (same moment)
+//   "2026-04-13"                 → wallDate=Apr 13, hour=0      (all-day)
+function toEastern(iso: string): { wallDate: Date; hour: number } {
+  // All-day events have no time component — preserve the date as-is.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+    const [y, m, d] = iso.split("-").map(Number);
+    return { wallDate: new Date(Date.UTC(y, m - 1, d)), hour: 0 };
   }
-  // Fallback (should never be reached for valid Google dateTime strings)
-  const d = new Date(iso);
-  return { wallDate: new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())), hour: 0 };
+
+  // Parse to a UTC moment (new Date handles offsets like -04:00 or Z correctly).
+  const utc = new Date(iso);
+
+  // Extract wall-clock components in Eastern Time using the built-in Intl API.
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: EASTERN_TZ,
+    year:     "numeric",
+    month:    "2-digit",
+    day:      "2-digit",
+    hour:     "2-digit",
+    minute:   "2-digit",
+    hour12:   false,
+  }).formatToParts(utc);
+
+  const get = (type: string) =>
+    parseInt(parts.find(p => p.type === type)?.value ?? "0", 10);
+
+  const year    = get("year");
+  const month   = get("month") - 1; // 0-indexed
+  const day     = get("day");
+  const hours   = get("hour") % 24; // hour12:false can return 24 at midnight
+  const minutes = get("minute");
+
+  return {
+    wallDate: new Date(Date.UTC(year, month, day)),
+    hour: hours + minutes / 60,
+  };
 }
 
 // ── Import logic ──────────────────────────────────────────────────────────────
@@ -276,8 +303,8 @@ async function importGoogleEvents(
           const endRaw = ev.end?.dateTime ?? ev.end?.date;
           if (!startRaw || !endRaw) continue;
 
-          const { wallDate: eventDate, hour: startHour } = parseWallClock(startRaw);
-          const { hour: endHour } = parseWallClock(endRaw);
+          const { wallDate: eventDate, hour: startHour } = toEastern(startRaw);
+          const { hour: endHour } = toEastern(endRaw);
 
           eventsToUpsert.push({
             externalId: ev.id,

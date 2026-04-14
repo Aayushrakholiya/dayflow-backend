@@ -126,11 +126,16 @@ async function graphGet(
   return res.json();
 }
 
+// ── Eastern Time constant ─────────────────────────────────────────────────────
+// America/Toronto automatically switches between EST (UTC-5) and EDT (UTC-4)
+// based on Canada's DST rules — no manual handling needed.
+const EASTERN_TZ = "America/Toronto";
+
 // ── Wall-clock parser ─────────────────────────────────────────────────────────
-// Extracts year/month/day/hour/minute directly from the ISO string WITHOUT
-// any timezone conversion so the result is the same on any server timezone.
-// Works after Graph API returns times in the user's mailbox timezone via the
-// "Prefer: outlook.timezone" request header.
+// Graph API returns datetimes in the timezone specified by the Prefer header
+// (hardcoded to "Eastern Standard Time" below), so the strings arrive without
+// a UTC offset and already represent Eastern wall-clock time.  We read the
+// digits directly — no conversion required.
 // Dates are stored as UTC midnight (Date.UTC) so the YYYY-MM-DD portion
 // serialised by the API always matches the original wall-clock date regardless
 // of the server's local timezone.
@@ -285,17 +290,10 @@ async function importMicrosoftEvents(
   const oneYearAgo   = new Date(Date.UTC(now.getUTCFullYear() - 1, now.getUTCMonth(), now.getUTCDate())).toISOString();
   const oneYearAhead = new Date(Date.UTC(now.getUTCFullYear() + 1, now.getUTCMonth(), now.getUTCDate())).toISOString();
 
-  // Fetch the user's mailbox timezone so Graph API returns event times in their
-  // local timezone rather than UTC.  This fixes the deployment vs. localhost
-  // time-shift caused by calling Date.getHours() on a UTC server.
-  let mailboxTimezone = "UTC";
-  try {
-    const settings = await graphGet("/me/mailboxSettings", accessToken);
-    if (settings?.timeZone) mailboxTimezone = settings.timeZone;
-  } catch {
-    // non-fatal — fall back to UTC
-  }
-  const preferHeaders = { Prefer: `outlook.timezone="${mailboxTimezone}"` };
+  // Ask Graph API to return all event datetimes in Eastern Time (EST/EDT).
+  // "Eastern Standard Time" is the Windows timezone name for America/Toronto;
+  // Microsoft automatically applies the correct DST offset (UTC-5 / UTC-4).
+  const preferHeaders = { Prefer: `outlook.timezone="Eastern Standard Time"` };
 
   const calData   = await graphGet("/me/calendars", accessToken);
   const calendars = calData.value ?? [];
